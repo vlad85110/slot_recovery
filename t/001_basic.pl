@@ -1,58 +1,61 @@
-
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
-
 use strict;
 use warnings;
-
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
 
+my $output;
+my $query = 'begin;
+             DO $$
+             DECLARE
+             i INT := 1;
+             BEGIN
+             WHILE i <= 655360 LOOP
+                  insert into t values (i, \'vlad\');
+                  i := i + 1;
+             END LOOP;
+             END $$;
+             commit;';
 
-my $node = PostgreSQL::Test::Cluster->new('main');
+my $node_primary = PostgreSQL::Test::Cluster->new('primary_1');
+$node_primary->init(has_archiving => 1, allows_streaming => 1, extra => ['--wal-segsize=4']);
+$node_primary->append_conf('postgresql.conf', qq(
+  min_wal_size = 8MB
+  max_wal_size = 16MB
+  max_slot_wal_keep_size = 6
+));
+$node_primary->start;
 
-$node->init;
-$node->append_conf(
-	'postgresql.conf',
-	qq{shared_preload_libraries = 'pg_prewarm'
-    pg_prewarm.autoprewarm = true
-    pg_prewarm.autoprewarm_interval = 0});
-$node->start;
+$node_primary->safe_psql('postgres', 'create table t (test_a int, test_b varchar)');
+$node_primary->safe_psql('postgres', "select pg_create_physical_replication_slot('slot1');");
 
-# setup
-$node->safe_psql("postgres",
-		"CREATE EXTENSION pg_prewarm;\n"
-	  . "CREATE TABLE test(c1 int);\n"
-	  . "INSERT INTO test SELECT generate_series(1, 100);");
+my $backup_name = 'my_backup';
+$node_primary->backup($backup_name);
 
-# test read mode
-my $result =
-  $node->safe_psql("postgres", "SELECT pg_prewarm('test', 'read');");
-like($result, qr/^[1-9][0-9]*$/, 'read mode succeeded');
+my $node_standby = PostgreSQL::Test::Cluster->new('standby_1');
+$node_standby->init_from_backup($node_primary, $backup_name, has_streaming => 1);
+$node_standby->append_conf('postgresql.conf', "primary_slot_name = 'slot1'");
+$node_standby->start;
 
-# test buffer_mode
-$result =
-  $node->safe_psql("postgres", "SELECT pg_prewarm('test', 'buffer');");
-like($result, qr/^[1-9][0-9]*$/, 'buffer mode succeeded');
+$node_primary->wait_for_catchup($node_standby);
+$node_standby->stop;
+$node_primary->stop;
 
-# prefetch mode might or might not be available
-my ($cmdret, $stdout, $stderr) =
-  $node->psql("postgres", "SELECT pg_prewarm('test', 'prefetch');");
-ok( (        $stdout =~ qr/^[1-9][0-9]*$/
-		  or $stderr =~ qr/prefetch is not supported by this build/),
-	'prefetch mode succeeded');
+my $ar_dir = $node_primary->archive_dir;
+$node_primary->append_conf('postgresql.conf',
+    qq(shared_preload_libraries = 'slot_recovery'
+       restore_command = 'test ! -f %p && cp $ar_dir/%f %p'));
 
-# test autoprewarm_dump_now()
-$result = $node->safe_psql("postgres", "SELECT autoprewarm_dump_now();");
-like($result, qr/^[1-9][0-9]*$/, 'autoprewarm_dump_now succeeded');
+$node_primary->start;
+$node_primary->safe_psql('postgres', $query);
 
-# restart, to verify that auto prewarm actually works
-$node->restart;
+$output = $node_primary->safe_psql('postgres', 'select wal_status from pg_replication_slots;');
+is($output, 'lost', 'Check slot overflow');
 
-$node->wait_for_log(
-	"autoprewarm successfully prewarmed [1-9][0-9]* of [0-9]+ previously-loaded blocks"
-);
+$node_standby->start;
 
-$node->stop;
+$node_primary->wait_for_log("starting recovery");
+$node_primary->wait_for_log("stopping recovery");
+$node_primary->wait_for_catchup($node_standby);
 
 done_testing();

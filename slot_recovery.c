@@ -1,9 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * slot_recovery.c
- *		  prewarming utilities
- *
- * Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *		  replication recovery after slot's overflow
  *
  * IDENTIFICATION
  *		  contrib/slot_recovery/slot_recovery.c

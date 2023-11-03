@@ -10,7 +10,7 @@ EXTENSION = slot_recovery
 DATA = slot_recovery--1.1--1.2.sql slot_recovery--1.1.sql slot_recovery--1.0--1.1.sql
 #PGFILEDESC = "slot_recovery - preload relation data into system buffer cache"
 
-#TAP_TESTS = 1
+TAP_TESTS = 1
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config
