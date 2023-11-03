@@ -19,19 +19,59 @@
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 #include "utils/guc.h"
+#include "miscadmin.h"
+#include "storage/ipc.h"
 
 #include "slot_recovery.h"
 
 
 PG_MODULE_MAGIC;
-PG_FUNCTION_INFO_V1(slot_recovery);
 
 static const struct config_enum_entry variable_conflict_options[] = {
         {"single", SINGLE, false},
         {"full_available", FULL, false},
 };
 
-int	slot_recovery_mode = SINGLE;
+SRConfig config;
+SRSharedData *data = NULL;
+
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+
+private void init_callbacks(void);
+
+private void pgss_shmem_request(void);
+private void pgss_shmem_startup(void);
+private void init_shared_data(void);
+
+void pgss_shmem_startup(void) {
+    bool found;
+
+    if (prev_shmem_startup_hook)
+        prev_shmem_startup_hook();
+
+    data = (SRSharedData *)ShmemInitStruct("shared data", sizeof(SRSharedData), &found);
+    //todo where free memory
+
+//    if (!found) {
+//        //todo cant access shared memory - only auto mode can be used for recovery
+//        return;
+//    }
+
+    init_shared_data();
+}
+
+void pgss_shmem_request(void) {
+    if (prev_shmem_request_hook)
+        prev_shmem_request_hook();
+
+    RequestAddinShmemSpace(sizeof(SRSharedData));
+}
+
+void init_shared_data(void) {
+    data->can_start_recovery = config.auto_recovery;
+    elog(LOG, "init - %d", data->can_start_recovery);
+}
 
 void
 _PG_init(void)
@@ -39,41 +79,36 @@ _PG_init(void)
     init_callbacks();
     ArchiveRecoveryRequested = true;
 
+    config.slot_recovery_mode = SINGLE;
+    config.auto_recovery = true;
+
     DefineCustomEnumVariable("slot_recovery.mode",
                              gettext_noop(""),
                              NULL,
-                             &slot_recovery_mode,
+                             &config.slot_recovery_mode,
                              SINGLE,
                              variable_conflict_options,
-                             PGC_SUSET, 0,
+                             PGC_BACKEND, 0,
                              NULL, NULL, NULL);
-}
 
-void _PG_fini()
-{
-    reset_callbacks();
-    ArchiveRecoveryRequested = false;
-}
+    DefineCustomBoolVariable("slot_recovery.auto_recovery",
+                             gettext_noop(""),
+                             NULL,
+                             &config.auto_recovery,
+                             true,
+                             PGC_BACKEND, 0,
+                             NULL, NULL, NULL);
 
-Datum
-slot_recovery(PG_FUNCTION_ARGS)
-{
-    PG_RETURN_VOID();
+    prev_shmem_request_hook = shmem_request_hook;
+    shmem_request_hook = pgss_shmem_request;
+    prev_shmem_startup_hook = shmem_startup_hook;
+    shmem_startup_hook = pgss_shmem_startup;
 }
 
 void init_callbacks(void)
 {
-    InstallCallback(recoveryCb, file_not_found_cb)
-    InstallCallback(openCb, walFileOpened)
-    InstallCallback(closeCb, walFileClosed)
-    InstallCallback(check_delete_xlog_file_cb, check_delete_xlog_file)
-}
-
-void reset_callbacks(void)
-{
-    ResetCallback(recoveryCb, file_not_found_cb)
-    ResetCallback(openCb, walFileOpened)
-    ResetCallback(closeCb, walFileClosed)
-    ResetCallback(check_delete_xlog_file_cb, check_delete_xlog_file)
- // problem
+    recoveryCb = file_not_found_cb;
+    openCb = walFileOpened;
+    closeCb = walFileClosed;
+    check_delete_xlog_file_cb = check_delete_xlog_file;
 }

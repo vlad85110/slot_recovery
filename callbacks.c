@@ -14,26 +14,37 @@
 
 #include "slot_recovery.h"
 
-private int in_slot_recovery = false;
+private bool in_slot_recovery;
 private XLogSegNo last_removed_segno;
+private int files_restored;
 
-private void start_recovery();
-private void stop_recovery();
-
+private void stop_recovery(void);
+private void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
+                            TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
                                  TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 //private void restore_all_files(char *start_xlogfilename);
 
-private void start_recovery() {
+void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
+                    TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
+    char start_file[MAXPGPATH];
+    char end_file[MAXPGPATH];
+
+    files_restored = 0;
     in_slot_recovery = true;
     last_removed_segno = XLogGetLastRemovedSegno();
-    elog(LOG, "starting recovery");
+
+    XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
+    XLogFileName(end_file, tli, last_removed_segno, wal_segsz_bytes);
+
+    elog(LOG, "starting recovery: oldest requested file - %s; last removed requested file - %s",
+         start_file, end_file);
 }
 
 private void stop_recovery() {
     in_slot_recovery = false;
-    elog(LOG, "stopping recovery");
-    reset_callbacks();
+    data->can_start_recovery = config.auto_recovery;
+    elog(LOG, "recovery complete: restore %d files", files_restored);
 }
 
 private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
@@ -46,20 +57,23 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
                              wal_segment_size, false))
     {
         //todo detect no space left
-        reset_callbacks();
         elog(ERROR, "cant restore wal");
     }
+
+    ++files_restored;
 }
 
 void
 file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
                   TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
-    if (!in_slot_recovery)
-    {
-        start_recovery();
+    elog(LOG, "can start recovery - %d", data->can_start_recovery);
+    if (!data->can_start_recovery) return;
+
+    if (!in_slot_recovery) {
+        start_recovery(state, slot, tli, logSegNo, wal_segsz_bytes);
     }
 
-    switch (slot_recovery_mode) {
+    switch (config.slot_recovery_mode) {
         case SINGLE:
             restore_single_file(state, slot, tli, logSegNo, wal_segsz_bytes);
             break;

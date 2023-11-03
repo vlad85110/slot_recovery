@@ -8,8 +8,6 @@
 #include "access/xlogreader.h"
 #include "replication/slot.h"
 
-#define InstallCallback(cb, fun) if(!cb) cb = fun;
-#define ResetCallback(cb, fun) if(cb == fun) cb = NULL;
 #define private static
 
 typedef enum RecoveryMode
@@ -18,18 +16,22 @@ typedef enum RecoveryMode
     FULL, // as much as place is available
 } RecoveryMode;
 
+typedef struct {
+     int slot_recovery_mode;
+     bool auto_recovery;
+} SRConfig;
+extern SRConfig config;
 
-extern int slot_recovery_mode;
-//extern int in_slot_recovery;
-//extern XLogSegNo last_removed_segno;
+typedef struct {
+    bool can_start_recovery;
+} SRSharedData;
+extern SRSharedData* data;
 
+/* Hooks */
 void file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot, TimeLineID tli,
                        XLogSegNo logSegNo, int wal_segsz_bytes);
 void walFileOpened(XLogReaderState *state);
 void walFileClosed(XLogReaderState *state);
 bool check_delete_xlog_file(XLogSegNo segNo);
-
-void init_callbacks(void);
-void reset_callbacks(void);
 
 #endif

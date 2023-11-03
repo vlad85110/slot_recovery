@@ -4,10 +4,11 @@ MODULE_big = slot_recovery
 OBJS = \
 	$(WIN32RES) \
 	slot_recovery.o \
-	callbacks.o
+	callbacks.o \
+	functions.o
 
 EXTENSION = slot_recovery
-DATA = slot_recovery--1.1--1.2.sql slot_recovery--1.1.sql slot_recovery--1.0--1.1.sql
+DATA = slot_recovery--1.0.sql
 #PGFILEDESC = "slot_recovery - preload relation data into system buffer cache"
 
 TAP_TESTS = 1
