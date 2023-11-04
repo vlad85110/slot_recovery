@@ -49,15 +49,14 @@ $node_primary->append_conf('postgresql.conf',
 $node_primary->start;
 $output = $node_primary->safe_psql('postgres', 'create extension slot_recovery;');
 $output = $node_primary->safe_psql('postgres', 'select slot_recovery();');
-is($output, "can't start - auto recovery is enabled", 'check cant start manual recovery');
+is($output, "auto recovery is enabled", 'check cant start manual recovery');
 $node_primary->stop;
 
-# # проверить что слот здоров и проверить что автовосстановление включено
-# $node_primary->append_conf('postgresql.conf', "slot_recovery.auto_recovery = false");
-# $node_primary->start;
-# $output = $node_primary->safe_psql('postgres', 'select slot_recovery();');
-# is($output, "can't start - slot is not invalidated", '');
-# $node_primary->stop;
+$node_primary->append_conf('postgresql.conf', "slot_recovery.auto_recovery = false");
+$node_primary->start;
+$output = $node_primary->safe_psql('postgres', 'select slot_recovery();');
+is($output, "there are no invalidated slots", '');
+$node_primary->stop;
 
 $node_primary->append_conf('postgresql.conf', "slot_recovery.auto_recovery = false");
 $node_primary->start;
@@ -71,5 +70,4 @@ $node_primary->wait_for_log("requested WAL segment 000000010000000000000004 has 
 $node_primary->safe_psql('postgres', 'select slot_recovery();');
 $node_primary->wait_for_catchup($node_standby);
 
-#
 done_testing();

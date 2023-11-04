@@ -43,7 +43,11 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
 
 private void stop_recovery() {
     in_slot_recovery = false;
+
+    SpinLockAcquire(&data->mutex);
     data->can_start_recovery = config.auto_recovery;
+    SpinLockRelease(&data->mutex);
+
     elog(LOG, "recovery complete: restore %d files", files_restored);
 }
 

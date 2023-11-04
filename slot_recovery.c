@@ -69,6 +69,8 @@ void pgss_shmem_request(void) {
 }
 
 void init_shared_data(void) {
+    //todo free
+    SpinLockInit(&data->mutex);
     data->can_start_recovery = config.auto_recovery;
     elog(LOG, "init - %d", data->can_start_recovery);
 }

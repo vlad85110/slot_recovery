@@ -23,6 +23,7 @@ typedef struct {
 extern SRConfig config;
 
 typedef struct {
+    slock_t mutex;
     bool can_start_recovery;
 } SRSharedData;
 extern SRSharedData* data;
