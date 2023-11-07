@@ -14,13 +14,12 @@ slot_recovery(PG_FUNCTION_ARGS) {
     if (config.auto_recovery) {
         PG_RETURN_TEXT_P(cstring_to_text("auto recovery is enabled"));
     } else {
-        int	slot_num;
+        int slot_num;
         ReplicationSlot *slot;
         bool invalidated = false;
 
         LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
-        for (slot_num = 0; slot_num < max_replication_slots; slot_num++)
-        {
+        for (slot_num = 0; slot_num < max_replication_slots; slot_num++) {
             slot = &ReplicationSlotCtl->replication_slots[0];
             SpinLockAcquire(&slot->mutex);
 
@@ -29,6 +28,7 @@ slot_recovery(PG_FUNCTION_ARGS) {
 
             SpinLockRelease(&slot->mutex);
         }
+        LWLockRelease(ReplicationSlotControlLock);
 
         if (!invalidated) {
             PG_RETURN_TEXT_P(cstring_to_text("there are no invalidated slots"));
@@ -39,8 +39,5 @@ slot_recovery(PG_FUNCTION_ARGS) {
 
             PG_RETURN_TEXT_P(cstring_to_text("starting recovery"));
         }
-
-//todo несколько слотов и  принимать в параметрах имя хранить в хешсете каком нибудь
-// и проверять при колбеке что для этого слота можно восстанавливать
     }
 }
