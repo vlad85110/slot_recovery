@@ -23,7 +23,8 @@ private void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
                             TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
                                  TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
-//private void restore_all_files(char *start_xlogfilename);
+private void restore_all_files(XLogReaderState *state, ReplicationSlot *slot,
+                               TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 
 void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
                     TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
@@ -32,6 +33,8 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
 
     files_restored = 0;
     in_slot_recovery = true;
+
+    //todo работает только после контрольной точки
     last_removed_segno = XLogGetLastRemovedSegno();
 
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
@@ -56,15 +59,27 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
     char path[MAXPGPATH];
     char name[MAXPGPATH];
 
+    elog(LOG, "last - %u", XLogGetLastRemovedSegno());
+
     XLogFileName(name, tli, logSegNo, wal_segsz_bytes);
     if (!RestoreArchivedFile(path, name, name,
                              wal_segment_size, false))
     {
-        //todo detect no space left
         elog(ERROR, "cant restore wal");
+    } else {
+        ++files_restored;
     }
+}
 
-    ++files_restored;
+void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID tli, XLogSegNo logSegNo,
+                       int wal_segsz_bytes) {
+    XLogSegNo seg_no;
+
+    elog(LOG, "restoring all files - %u, %u", logSegNo, last_removed_segno);
+
+    for (seg_no = logSegNo; seg_no <= last_removed_segno; ++seg_no) {
+        restore_single_file(state, slot, tli, seg_no, wal_segsz_bytes);
+    }
 }
 
 void
@@ -82,6 +97,8 @@ file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
             restore_single_file(state, slot, tli, logSegNo, wal_segsz_bytes);
             break;
         case FULL:
+            restore_all_files(state, slot, tli, logSegNo, wal_segsz_bytes);
+            break;
         default:
             break;
     }
@@ -112,4 +129,6 @@ bool check_delete_xlog_file(XLogSegNo segNo) {
 
     return segNo > last_removed_segno;
 }
+
+// todo посмотреть другие варианты решения
 

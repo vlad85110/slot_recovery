@@ -9,7 +9,7 @@ OBJS = \
 
 EXTENSION = slot_recovery
 DATA = slot_recovery--1.0.sql
-#PGFILEDESC = "slot_recovery - preload relation data into system buffer cache"
+
 
 TAP_TESTS = 1
 

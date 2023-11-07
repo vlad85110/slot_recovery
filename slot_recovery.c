@@ -29,7 +29,7 @@ PG_MODULE_MAGIC;
 
 static const struct config_enum_entry variable_conflict_options[] = {
         {"single", SINGLE, false},
-        {"full_available", FULL, false},
+        {"full", FULL, false},
 };
 
 SRConfig config;

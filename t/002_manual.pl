@@ -61,10 +61,12 @@ $node_primary->stop;
 $node_primary->append_conf('postgresql.conf', "slot_recovery.auto_recovery = false");
 $node_primary->start;
 $node_primary->safe_psql('postgres', $query);
-
 $output = $node_primary->safe_psql('postgres', 'select wal_status from pg_replication_slots;');
 is($output, 'lost', 'Check slot overflow');
+$node_primary->stop;
 
+$node_primary->start;
+$node_primary->safe_psql('postgres', ' CHECKPOINT;');
 $node_standby->start;
 $node_primary->wait_for_log("requested WAL segment 000000010000000000000004 has already been removed");
 $node_primary->safe_psql('postgres', 'select slot_recovery();');
