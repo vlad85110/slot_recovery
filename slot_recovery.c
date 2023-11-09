@@ -44,6 +44,8 @@ private void pgss_shmem_request(void);
 private void pgss_shmem_startup(void);
 private void init_shared_data(void);
 
+// on_shmem_exit
+
 void pgss_shmem_startup(void) {
     bool found;
 

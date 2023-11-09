@@ -26,6 +26,8 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
 private void restore_all_files(XLogReaderState *state, ReplicationSlot *slot,
                                TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 
+//todo если в процессе чекпоинтер снес более поздние, посмотреть возможно ли такое
+
 void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
                     TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
     char start_file[MAXPGPATH];
@@ -35,6 +37,7 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     in_slot_recovery = true;
 
     //todo работает только после контрольной точки
+    //todo select last_archived_wal from pg_stat_archiver;
     last_removed_segno = XLogGetLastRemovedSegno();
 
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
@@ -131,4 +134,5 @@ bool check_delete_xlog_file(XLogSegNo segNo) {
 }
 
 // todo посмотреть другие варианты решения
+// todo мониторинг - можно добавить функцию статистики - визуализация lsn слота визуализацию
 
