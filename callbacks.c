@@ -36,8 +36,14 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     files_restored = 0;
     in_slot_recovery = true;
 
+    SpinLockAcquire(&data->mutex);
+    data->last_restored_segno = 0;
+    SpinLockRelease(&data->mutex);
+
     //todo работает только после контрольной точки
     //todo select last_archived_wal from pg_stat_archiver;
+
+    //todo обновлять после каждого восстановленного файла
     last_removed_segno = XLogGetLastRemovedSegno();
 
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
@@ -62,7 +68,7 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
     char path[MAXPGPATH];
     char name[MAXPGPATH];
 
-    elog(LOG, "last - %u", XLogGetLastRemovedSegno());
+    //todo mb tli callback
 
     XLogFileName(name, tli, logSegNo, wal_segsz_bytes);
     if (!RestoreArchivedFile(path, name, name,
@@ -71,14 +77,17 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
         elog(ERROR, "cant restore wal");
     } else {
         ++files_restored;
+        data->last_restored_segno = logSegNo;
     }
+
+    sleep(1);
 }
 
 void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID tli, XLogSegNo logSegNo,
                        int wal_segsz_bytes) {
     XLogSegNo seg_no;
 
-    elog(LOG, "restoring all files - %u, %u", logSegNo, last_removed_segno);
+    elog(LOG, "restoring all files");
 
     for (seg_no = logSegNo; seg_no <= last_removed_segno; ++seg_no) {
         restore_single_file(state, slot, tli, seg_no, wal_segsz_bytes);
@@ -88,7 +97,12 @@ void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID
 void
 file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
                   TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
-    elog(LOG, "can start recovery - %d", data->can_start_recovery);
+//    elog(LOG, "can start recovery - %d", data->can_start_recovery);
+    SpinLockAcquire(&data->mutex);
+    data->tli = tli;
+    data->wal_seg_size = wal_segsz_bytes;
+    SpinLockRelease(&data->mutex);
+
     if (!data->can_start_recovery) return;
 
     if (!in_slot_recovery) {
@@ -125,12 +139,20 @@ void walFileClosed(XLogReaderState *state) {
         stop_recovery();
     }
 }
-
+// todo при остановке реплики становится lost
 bool check_delete_xlog_file(XLogSegNo segNo) {
     if (!in_slot_recovery)
         return true;
 
     return segNo > last_removed_segno;
+}
+
+void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr) {
+    data->apply_ptr = applyPtr;
+}
+
+void set_restart_lsn(XLogRecPtr restart_lsn) {
+    data->restart_lsn = restart_lsn;
 }
 
 // todo посмотреть другие варианты решения

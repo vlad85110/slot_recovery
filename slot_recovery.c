@@ -74,7 +74,9 @@ void init_shared_data(void) {
     //todo free
     SpinLockInit(&data->mutex);
     data->can_start_recovery = config.auto_recovery;
-    elog(LOG, "init - %d", data->can_start_recovery);
+    data->last_restored_segno = 0;
+    data->apply_ptr = InvalidXLogRecPtr;
+    data->restart_lsn = InvalidXLogRecPtr;
 }
 
 void
@@ -103,6 +105,15 @@ _PG_init(void)
                              PGC_BACKEND, 0,
                              NULL, NULL, NULL);
 
+    DefineCustomStringVariable("slot_recovery.archive_dir",
+                               gettext_noop(""),
+                               NULL,
+                               &config.archive_dir,
+                               "",
+                               PGC_SIGHUP,
+                               0,
+                               NULL, NULL, NULL);
+
     prev_shmem_request_hook = shmem_request_hook;
     shmem_request_hook = pgss_shmem_request;
     prev_shmem_startup_hook = shmem_startup_hook;
@@ -115,4 +126,6 @@ void init_callbacks(void)
     openCb = walFileOpened;
     closeCb = walFileClosed;
     check_delete_xlog_file_cb = check_delete_xlog_file;
+    statCb = get_stat;
+    saveLsnCb = set_restart_lsn;
 }
