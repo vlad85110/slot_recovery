@@ -103,32 +103,6 @@ read_dir(const char *dirname) {
     return result;
 }
 
-Datum
-is_file_restored(PG_FUNCTION_ARGS) {
-    char *file_name;
-    const char *segment_str;
-    char *endptr;
-    int segno;
-
-    PG_RETURN_BOOL(false);
-
-    if (data->last_restored_segno == 0) {
-        PG_RETURN_BOOL(false);
-    }
-
-    file_name = text_to_cstring(PG_GETARG_TEXT_P(0));
-
-    //todo check str len (is it wal file)
-    segment_str = file_name + strlen(file_name) - 8;
-    segno = (int) strtol(segment_str, &endptr, 16);
-
-    if (*endptr != '\0') {
-        PG_RETURN_BOOL(false);
-    }
-
-    //todo add spinlock
-    PG_RETURN_BOOL(segno >= data->last_restored_segno);
-}
 
 Datum get_restart_lsn(PG_FUNCTION_ARGS) {
     ReplicationSlot *slot;
