@@ -41,8 +41,6 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     SpinLockRelease(&data->mutex);
 
     //todo работает только после контрольной точки
-    //todo select last_archived_wal from pg_stat_archiver;
-
     //todo обновлять после каждого восстановленного файла
     last_removed_segno = XLogGetLastRemovedSegno();
 
@@ -55,6 +53,10 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
 
 private void stop_recovery() {
     in_slot_recovery = false;
+
+    LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
+    MyReplicationSlot->data.invalidated = RS_INVAL_NONE;
+    LWLockRelease(ReplicationSlotControlLock);
 
     SpinLockAcquire(&data->mutex);
     data->can_start_recovery = config.auto_recovery;
@@ -139,6 +141,7 @@ void walFileClosed(XLogReaderState *state) {
         stop_recovery();
     }
 }
+
 // todo при остановке реплики становится lost
 bool check_delete_xlog_file(XLogSegNo segNo) {
     if (!in_slot_recovery)
@@ -154,7 +157,4 @@ void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr) {
 void set_restart_lsn(XLogRecPtr restart_lsn) {
     data->restart_lsn = restart_lsn;
 }
-
-// todo посмотреть другие варианты решения
-// todo мониторинг - можно добавить функцию статистики - визуализация lsn слота визуализацию
 
