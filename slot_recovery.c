@@ -119,7 +119,6 @@ void init_callbacks(void)
 {
     recoveryCb = file_not_found_cb; //+
     statCb = get_stat; //+
-    saveLsnCb = set_restart_lsn;
 
     openCb = walFileOpened; //+
     closeCb = walFileClosed; //+

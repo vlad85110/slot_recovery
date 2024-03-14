@@ -120,11 +120,6 @@ file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
     }
 }
 
-void walFileOpened(XLogReaderState *state) {
-    if (!in_slot_recovery)
-        return;
-}
-
 void walFileClosed(XLogReaderState *state) {
     char		path[MAXPGPATH];
 
@@ -148,9 +143,5 @@ bool check_delete_xlog_file(XLogSegNo segNo) {
 
 void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr) {
     data->apply_ptr = applyPtr;
-}
-
-void set_restart_lsn(XLogRecPtr restart_lsn) {
-    data->restart_lsn = restart_lsn;
 }
 
