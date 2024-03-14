@@ -42,7 +42,6 @@ void file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot, TimeLineID
                        XLogSegNo logSegNo, int wal_segsz_bytes);
 void walFileClosed(XLogReaderState *state);
 bool check_delete_xlog_file(XLogSegNo segNo);
-void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
 
 
 #endif

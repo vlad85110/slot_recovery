@@ -118,9 +118,6 @@ _PG_init(void)
 void init_callbacks(void)
 {
     recoveryCb = file_not_found_cb; //+
-    statCb = get_stat; //+
-
-    openCb = walFileOpened; //+
     closeCb = walFileClosed; //+
     check_delete_xlog_file_cb = check_delete_xlog_file; //+
 }

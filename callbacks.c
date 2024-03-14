@@ -141,7 +141,3 @@ bool check_delete_xlog_file(XLogSegNo segNo) {
     return segNo > last_removed_segno;
 }
 
-void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr) {
-    data->apply_ptr = applyPtr;
-}
-
