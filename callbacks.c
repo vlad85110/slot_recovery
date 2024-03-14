@@ -15,7 +15,11 @@
 #include "slot_recovery.h"
 
 private bool in_slot_recovery;
+
+//todo перененсти в разделяемую память
 private XLogSegNo last_removed_segno;
+
+
 private int files_restored;
 
 private void stop_recovery(void);
@@ -25,8 +29,6 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
                                  TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 private void restore_all_files(XLogReaderState *state, ReplicationSlot *slot,
                                TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
-
-//todo если в процессе чекпоинтер снес более поздние, посмотреть возможно ли такое
 
 void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
                     TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
@@ -40,8 +42,6 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     data->last_restored_segno = 0;
     SpinLockRelease(&data->mutex);
 
-    //todo работает только после контрольной точки
-    //todo обновлять после каждого восстановленного файла
     last_removed_segno = XLogGetLastRemovedSegno();
 
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
@@ -70,8 +70,6 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
     char path[MAXPGPATH];
     char name[MAXPGPATH];
 
-    //todo mb tli callback
-
     XLogFileName(name, tli, logSegNo, wal_segsz_bytes);
     if (!RestoreArchivedFile(path, name, name,
                              wal_segment_size, false))
@@ -99,7 +97,6 @@ void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID
 void
 file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
                   TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes) {
-//    elog(LOG, "can start recovery - %d", data->can_start_recovery);
     SpinLockAcquire(&data->mutex);
     data->tli = tli;
     data->wal_seg_size = wal_segsz_bytes;
@@ -142,7 +139,6 @@ void walFileClosed(XLogReaderState *state) {
     }
 }
 
-// todo при остановке реплики становится lost
 bool check_delete_xlog_file(XLogSegNo segNo) {
     if (!in_slot_recovery)
         return true;

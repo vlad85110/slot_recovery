@@ -44,8 +44,6 @@ private void pgss_shmem_request(void);
 private void pgss_shmem_startup(void);
 private void init_shared_data(void);
 
-// on_shmem_exit
-
 void pgss_shmem_startup(void) {
     bool found;
 
@@ -53,7 +51,6 @@ void pgss_shmem_startup(void) {
         prev_shmem_startup_hook();
 
     data = (SRSharedData *)ShmemInitStruct("shared data", sizeof(SRSharedData), &found);
-    //todo where free memory
 
 //    if (!found) {
 //        //todo cant access shared memory - only auto mode can be used for recovery
@@ -71,10 +68,8 @@ void pgss_shmem_request(void) {
 }
 
 void init_shared_data(void) {
-    //todo free
     SpinLockInit(&data->mutex);
     data->can_start_recovery = config.auto_recovery;
-    data->last_restored_segno = 0;
     data->apply_ptr = InvalidXLogRecPtr;
     data->restart_lsn = InvalidXLogRecPtr;
 }
@@ -122,10 +117,11 @@ _PG_init(void)
 
 void init_callbacks(void)
 {
-    recoveryCb = file_not_found_cb;
-    openCb = walFileOpened;
-    closeCb = walFileClosed;
-    check_delete_xlog_file_cb = check_delete_xlog_file;
-    statCb = get_stat;
+    recoveryCb = file_not_found_cb; //+
+    statCb = get_stat; //+
     saveLsnCb = set_restart_lsn;
+
+    openCb = walFileOpened; //+
+    closeCb = walFileClosed; //+
+    check_delete_xlog_file_cb = check_delete_xlog_file; //+
 }
