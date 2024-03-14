@@ -1,534 +1,534 @@
 diff --git a/contrib/Makefile b/contrib/Makefile
-index bbf220407b..d0cc8e7c0f 100644
+index d0cc8e7c0f..bbf220407b 100644
 --- a/contrib/Makefile
 +++ b/contrib/Makefile
-@@ -44,6 +44,7 @@ SUBDIRS = \
+@@ -44,7 +44,6 @@ SUBDIRS = \
  		pg_walinspect	\
  		postgres_fdw	\
  		seg		\
-+		slot_recovery   \
+-		slot_recovery   \
  		spi		\
  		tablefunc	\
  		tcn		\
 diff --git a/slot_recovery.patch b/slot_recovery.patch
-new file mode 100644
-index 0000000000..da7f69a5ba
---- /dev/null
-+++ b/slot_recovery.patch
-@@ -0,0 +1,258 @@
-+diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
-+index 06235073ce..6ae93d6abd 100644
-+--- a/src/backend/access/transam/xlog.c
-++++ b/src/backend/access/transam/xlog.c
-+@@ -3680,6 +3680,11 @@ RemoveNonParentXlogFiles(XLogRecPtr switchpoint, TimeLineID newTLI)
-+  * insertTLI is the current timeline for XLOG insertion. Any recycled segments
-+  * should be used for this timeline.
-+  */
-++
-++/* Slot Recovery */
-++CheckDeleteXlogFileCB check_delete_xlog_file_cb = NULL;
-++/* /Slot Recovery */
-++
-+ static void
-+ RemoveXlogFile(const struct dirent *segment_de,
-+ 			   XLogSegNo recycleSegNo, XLogSegNo *endlogSegNo,
-+@@ -3693,6 +3698,14 @@ RemoveXlogFile(const struct dirent *segment_de,
-+ 
-+ 	snprintf(path, MAXPGPATH, XLOGDIR "/%s", segname);
-+ 
-++	/* Slot Recovery */
-++	 if (check_delete_xlog_file_cb) {
-++        if (!check_delete_xlog_file_cb(recycleSegNo))
-++            return;
-++    }
-++	/* /Slot Recovery */
-++
-++
-+ 	/*
-+ 	 * Before deleting the file, see if it can be recycled as a future log
-+ 	 * segment. Only recycle normal files, because we don't want to recycle
-+diff --git a/src/backend/access/transam/xlogreader.c b/src/backend/access/transam/xlogreader.c
-+index 85745fa3bf..d3023ed6e7 100644
-+--- a/src/backend/access/transam/xlogreader.c
-++++ b/src/backend/access/transam/xlogreader.c
-+@@ -41,6 +41,10 @@
-+ #include "common/logging.h"
-+ #endif
-+ 
-++/* Slot Recovery */
-++WalFileOpenCB openCb = NULL;
-++/* /Slot Recovery */
-++
-+ static void report_invalid_record(XLogReaderState *state, const char *fmt,...)
-+ 			pg_attribute_printf(2, 3);
-+ static void allocate_recordbuf(XLogReaderState *state, uint32 reclength);
-+@@ -1548,6 +1552,13 @@ WALRead(XLogReaderState *state,
-+ 			/* Update the current segment info. */
-+ 			state->seg.ws_tli = tli;
-+ 			state->seg.ws_segno = nextSegNo;
-++			
-++			ç
-++			if (openCb) 
-++			{
-++                openCb(state);
-++            }
-++			/* /Slot Recovery */
-+ 		}
-+ 
-+ 		/* How many bytes are within this segment? */
-+diff --git a/src/backend/access/transam/xlogutils.c b/src/backend/access/transam/xlogutils.c
-+index 43f7b31205..3e455eaeaa 100644
-+--- a/src/backend/access/transam/xlogutils.c
-++++ b/src/backend/access/transam/xlogutils.c
-+@@ -32,6 +32,9 @@
-+ #include "utils/hsearch.h"
-+ #include "utils/rel.h"
-+ 
-++/* Slot Recovery */
-++WalFileCloseCB closeCb = NULL;
-++/* /Slot Recovery */
-+ 
-+ /* GUC variable */
-+ bool		ignore_invalid_pages = false;
-+@@ -843,6 +846,13 @@ wal_segment_open(XLogReaderState *state, XLogSegNo nextSegNo,
-+ void
-+ wal_segment_close(XLogReaderState *state)
-+ {
-++	/* Slot Recovery */
-++	if (closeCb)
-++	{
-++        closeCb(state);
-++    }
-++	/* /Slot Recovery */
-++	
-+ 	close(state->seg.ws_file);
-+ 	/* need to check errno? */
-+ 	state->seg.ws_file = -1;
-+diff --git a/src/backend/replication/slot.c b/src/backend/replication/slot.c
-+index e70f066eb8..8eae954dd1 100644
-+--- a/src/backend/replication/slot.c
-++++ b/src/backend/replication/slot.c
-+@@ -1312,6 +1312,7 @@ ReportSlotInvalidation(ReplicationSlotInvalidationCause cause,
-+  * This is inherently racy, because we release the LWLock
-+  * for syscalls, so caller must restart if we return true.
-+  */
-++
-+ static bool
-+ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
-+ 							   ReplicationSlot *s,
-+@@ -1438,8 +1439,12 @@ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
-+ 			 * XXX: We should consider not overwriting restart_lsn and instead
-+ 			 * just rely on .invalidated.
-+ 			 */
-+-			if (conflict == RS_INVAL_WAL_REMOVED)
-+-				s->data.restart_lsn = InvalidXLogRecPtr;
-++			if (conflict == RS_INVAL_WAL_REMOVED) {
-++				/* Slot Recovery */
-++				if (!recoveryCb) 
-++					s->data.restart_lsn = InvalidXLogRecPtr;
-++				/* /Slot Recovery */
-++			}
-+ 
-+ 			/* Let caller know */
-+ 			*invalidated = true;
-+@@ -1774,9 +1779,12 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
-+ 	slot->just_dirtied = false;
-+ 	SpinLockRelease(&slot->mutex);
-+ 
-+-	/* and don't do anything if there's nothing to write */
-+-	if (!was_dirty)
-+-		return;
-++	/* Slot Recovery */
-++	if (!recoveryCb) {
-++        if (!was_dirty)
-++            return;
-++    }
-++	/* /Slot Recovery */
-+ 
-+ 	LWLockAcquire(&slot->io_in_progress_lock, LW_EXCLUSIVE);
-+ 
-+diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
-+index 4c53de08b9..744df6def4 100644
-+--- a/src/backend/replication/walsender.c
-++++ b/src/backend/replication/walsender.c
-+@@ -2142,6 +2142,13 @@ ProcessStandbyReplyMessage(void)
-+ 		walsnd->write = writePtr;
-+ 		walsnd->flush = flushPtr;
-+ 		walsnd->apply = applyPtr;
-++
-++		/* Slot Recovery */
-++		if (statCb) {
-++            statCb(writePtr, flushPtr, applyPtr);
-++        }
-++		/* /Slot Recovery */
-++
-+ 		if (writeLag != -1 || clearLagTimes)
-+ 			walsnd->writeLag = writeLag;
-+ 		if (flushLag != -1 || clearLagTimes)
-+@@ -2706,8 +2713,20 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
-+ 
-+ 	XLogFilePath(path, *tli_p, nextSegNo, state->segcxt.ws_segsize);
-+ 	state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
-+-	if (state->seg.ws_file >= 0)
-++	if (state->seg.ws_file >= 0) 
-++	{
-+ 		return;
-++	}  else
-++	{
-++		if (recoveryCb)
-++        {
-++            recoveryCb(xlogreader, MyReplicationSlot, *tli_p, nextSegNo,
-++                       state->segcxt.ws_segsize);
-++            state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
-++            if (state->seg.ws_file >= 0)
-++                return;
-++        }
-++	}
-+ 
-+ 	/*
-+ 	 * If the file is not found, assume it's because the standby asked for a
-+@@ -2742,6 +2761,12 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
-+  * If there is no unsent WAL remaining, WalSndCaughtUp is set to true,
-+  * otherwise WalSndCaughtUp is set to false.
-+  */
-++
-++/* Slot Recovery */
-++SlotRecoveryCB recoveryCb = NULL;
-++StatCB statCb = NULL;
-++/* /Slot Recovery */
-++
-+ static void
-+ XLogSendPhysical(void)
-+ {
-+@@ -2978,7 +3003,12 @@ retry:
-+ 
-+ 	/* See logical_read_xlog_page(). */
-+ 	XLByteToSeg(startptr, segno, xlogreader->segcxt.ws_segsize);
-+-	CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
-++
-++	/* Slot Recovery */
-++	if (!recoveryCb) {
-++        CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
-++    }
-++	/* /Slot Recovery */
-+ 
-+ 	/*
-+ 	 * During recovery, the currently-open WAL file might be replaced with the
-+diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
-+index 48ca852381..a6252311db 100644
-+--- a/src/include/access/xlog.h
-++++ b/src/include/access/xlog.h
-+@@ -299,4 +299,9 @@ extern SessionBackupState get_backup_status(void);
-+ /* files to signal promotion to primary */
-+ #define PROMOTE_SIGNAL_FILE		"promote"
-+ 
-++/* Slot Recovery */
-++typedef bool (*CheckDeleteXlogFileCB) (XLogSegNo segNo);
-++extern PGDLLIMPORT CheckDeleteXlogFileCB check_delete_xlog_file_cb;
-++/* /Slot Recovery */
-++
-+ #endif							/* XLOG_H */
-+diff --git a/src/include/access/xlogreader.h b/src/include/access/xlogreader.h
-+index da32c7db77..e4aa84930c 100644
-+--- a/src/include/access/xlogreader.h
-++++ b/src/include/access/xlogreader.h
-+@@ -441,4 +441,9 @@ extern bool XLogRecGetBlockTagExtended(XLogReaderState *record, uint8 block_id,
-+ 									   BlockNumber *blknum,
-+ 									   Buffer *prefetch_buffer);
-+ 
-++/* Slot Recovery */
-++typedef void (*WalFileOpenCB) (XLogReaderState *state);
-++extern PGDLLIMPORT WalFileOpenCB openCb;
-++/* /Slot Recovery */
-++
-+ #endif							/* XLOGREADER_H */
-+diff --git a/src/include/access/xlogutils.h b/src/include/access/xlogutils.h
-+index 5b77b11f50..8e6bb36428 100644
-+--- a/src/include/access/xlogutils.h
-++++ b/src/include/access/xlogutils.h
-+@@ -115,4 +115,9 @@ extern void XLogReadDetermineTimeline(XLogReaderState *state,
-+ 
-+ extern void WALReadRaiseError(WALReadError *errinfo);
-+ 
-++/* Slot Recovery */
-++typedef void (*WalFileCloseCB) (XLogReaderState *state);
-++extern PGDLLIMPORT WalFileCloseCB closeCb;
-++/* /Slot Recovery */
-++
-+ #endif
-+diff --git a/src/include/replication/slot.h b/src/include/replication/slot.h
-+index a8a89dc784..7e6f5026ae 100644
-+--- a/src/include/replication/slot.h
-++++ b/src/include/replication/slot.h
-+@@ -246,4 +246,13 @@ extern void CheckPointReplicationSlots(void);
-+ extern void CheckSlotRequirements(void);
-+ extern void CheckSlotPermissions(void);
-+ 
-++/* Slot Recovery */
-++typedef void (*SlotRecoveryCB) (XLogReaderState *state, ReplicationSlot *slot,
-++        TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
-++extern PGDLLIMPORT SlotRecoveryCB recoveryCb;
-++
-++typedef void (*StatCB) (XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
-++extern PGDLLIMPORT StatCB statCb;
-++/* /Slot Recovery */
-++
-+ #endif							/* SLOT_H */
+deleted file mode 100644
+index da7f69a5ba..0000000000
+--- a/slot_recovery.patch
++++ /dev/null
+@@ -1,258 +0,0 @@
+-diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
+-index 06235073ce..6ae93d6abd 100644
+---- a/src/backend/access/transam/xlog.c
+-+++ b/src/backend/access/transam/xlog.c
+-@@ -3680,6 +3680,11 @@ RemoveNonParentXlogFiles(XLogRecPtr switchpoint, TimeLineID newTLI)
+-  * insertTLI is the current timeline for XLOG insertion. Any recycled segments
+-  * should be used for this timeline.
+-  */
+-+
+-+/* Slot Recovery */
+-+CheckDeleteXlogFileCB check_delete_xlog_file_cb = NULL;
+-+/* /Slot Recovery */
+-+
+- static void
+- RemoveXlogFile(const struct dirent *segment_de,
+- 			   XLogSegNo recycleSegNo, XLogSegNo *endlogSegNo,
+-@@ -3693,6 +3698,14 @@ RemoveXlogFile(const struct dirent *segment_de,
+- 
+- 	snprintf(path, MAXPGPATH, XLOGDIR "/%s", segname);
+- 
+-+	/* Slot Recovery */
+-+	 if (check_delete_xlog_file_cb) {
+-+        if (!check_delete_xlog_file_cb(recycleSegNo))
+-+            return;
+-+    }
+-+	/* /Slot Recovery */
+-+
+-+
+- 	/*
+- 	 * Before deleting the file, see if it can be recycled as a future log
+- 	 * segment. Only recycle normal files, because we don't want to recycle
+-diff --git a/src/backend/access/transam/xlogreader.c b/src/backend/access/transam/xlogreader.c
+-index 85745fa3bf..d3023ed6e7 100644
+---- a/src/backend/access/transam/xlogreader.c
+-+++ b/src/backend/access/transam/xlogreader.c
+-@@ -41,6 +41,10 @@
+- #include "common/logging.h"
+- #endif
+- 
+-+/* Slot Recovery */
+-+WalFileOpenCB openCb = NULL;
+-+/* /Slot Recovery */
+-+
+- static void report_invalid_record(XLogReaderState *state, const char *fmt,...)
+- 			pg_attribute_printf(2, 3);
+- static void allocate_recordbuf(XLogReaderState *state, uint32 reclength);
+-@@ -1548,6 +1552,13 @@ WALRead(XLogReaderState *state,
+- 			/* Update the current segment info. */
+- 			state->seg.ws_tli = tli;
+- 			state->seg.ws_segno = nextSegNo;
+-+			
+-+			ç
+-+			if (openCb) 
+-+			{
+-+                openCb(state);
+-+            }
+-+			/* /Slot Recovery */
+- 		}
+- 
+- 		/* How many bytes are within this segment? */
+-diff --git a/src/backend/access/transam/xlogutils.c b/src/backend/access/transam/xlogutils.c
+-index 43f7b31205..3e455eaeaa 100644
+---- a/src/backend/access/transam/xlogutils.c
+-+++ b/src/backend/access/transam/xlogutils.c
+-@@ -32,6 +32,9 @@
+- #include "utils/hsearch.h"
+- #include "utils/rel.h"
+- 
+-+/* Slot Recovery */
+-+WalFileCloseCB closeCb = NULL;
+-+/* /Slot Recovery */
+- 
+- /* GUC variable */
+- bool		ignore_invalid_pages = false;
+-@@ -843,6 +846,13 @@ wal_segment_open(XLogReaderState *state, XLogSegNo nextSegNo,
+- void
+- wal_segment_close(XLogReaderState *state)
+- {
+-+	/* Slot Recovery */
+-+	if (closeCb)
+-+	{
+-+        closeCb(state);
+-+    }
+-+	/* /Slot Recovery */
+-+	
+- 	close(state->seg.ws_file);
+- 	/* need to check errno? */
+- 	state->seg.ws_file = -1;
+-diff --git a/src/backend/replication/slot.c b/src/backend/replication/slot.c
+-index e70f066eb8..8eae954dd1 100644
+---- a/src/backend/replication/slot.c
+-+++ b/src/backend/replication/slot.c
+-@@ -1312,6 +1312,7 @@ ReportSlotInvalidation(ReplicationSlotInvalidationCause cause,
+-  * This is inherently racy, because we release the LWLock
+-  * for syscalls, so caller must restart if we return true.
+-  */
+-+
+- static bool
+- InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
+- 							   ReplicationSlot *s,
+-@@ -1438,8 +1439,12 @@ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
+- 			 * XXX: We should consider not overwriting restart_lsn and instead
+- 			 * just rely on .invalidated.
+- 			 */
+--			if (conflict == RS_INVAL_WAL_REMOVED)
+--				s->data.restart_lsn = InvalidXLogRecPtr;
+-+			if (conflict == RS_INVAL_WAL_REMOVED) {
+-+				/* Slot Recovery */
+-+				if (!recoveryCb) 
+-+					s->data.restart_lsn = InvalidXLogRecPtr;
+-+				/* /Slot Recovery */
+-+			}
+- 
+- 			/* Let caller know */
+- 			*invalidated = true;
+-@@ -1774,9 +1779,12 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
+- 	slot->just_dirtied = false;
+- 	SpinLockRelease(&slot->mutex);
+- 
+--	/* and don't do anything if there's nothing to write */
+--	if (!was_dirty)
+--		return;
+-+	/* Slot Recovery */
+-+	if (!recoveryCb) {
+-+        if (!was_dirty)
+-+            return;
+-+    }
+-+	/* /Slot Recovery */
+- 
+- 	LWLockAcquire(&slot->io_in_progress_lock, LW_EXCLUSIVE);
+- 
+-diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
+-index 4c53de08b9..744df6def4 100644
+---- a/src/backend/replication/walsender.c
+-+++ b/src/backend/replication/walsender.c
+-@@ -2142,6 +2142,13 @@ ProcessStandbyReplyMessage(void)
+- 		walsnd->write = writePtr;
+- 		walsnd->flush = flushPtr;
+- 		walsnd->apply = applyPtr;
+-+
+-+		/* Slot Recovery */
+-+		if (statCb) {
+-+            statCb(writePtr, flushPtr, applyPtr);
+-+        }
+-+		/* /Slot Recovery */
+-+
+- 		if (writeLag != -1 || clearLagTimes)
+- 			walsnd->writeLag = writeLag;
+- 		if (flushLag != -1 || clearLagTimes)
+-@@ -2706,8 +2713,20 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
+- 
+- 	XLogFilePath(path, *tli_p, nextSegNo, state->segcxt.ws_segsize);
+- 	state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
+--	if (state->seg.ws_file >= 0)
+-+	if (state->seg.ws_file >= 0) 
+-+	{
+- 		return;
+-+	}  else
+-+	{
+-+		if (recoveryCb)
+-+        {
+-+            recoveryCb(xlogreader, MyReplicationSlot, *tli_p, nextSegNo,
+-+                       state->segcxt.ws_segsize);
+-+            state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
+-+            if (state->seg.ws_file >= 0)
+-+                return;
+-+        }
+-+	}
+- 
+- 	/*
+- 	 * If the file is not found, assume it's because the standby asked for a
+-@@ -2742,6 +2761,12 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
+-  * If there is no unsent WAL remaining, WalSndCaughtUp is set to true,
+-  * otherwise WalSndCaughtUp is set to false.
+-  */
+-+
+-+/* Slot Recovery */
+-+SlotRecoveryCB recoveryCb = NULL;
+-+StatCB statCb = NULL;
+-+/* /Slot Recovery */
+-+
+- static void
+- XLogSendPhysical(void)
+- {
+-@@ -2978,7 +3003,12 @@ retry:
+- 
+- 	/* See logical_read_xlog_page(). */
+- 	XLByteToSeg(startptr, segno, xlogreader->segcxt.ws_segsize);
+--	CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
+-+
+-+	/* Slot Recovery */
+-+	if (!recoveryCb) {
+-+        CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
+-+    }
+-+	/* /Slot Recovery */
+- 
+- 	/*
+- 	 * During recovery, the currently-open WAL file might be replaced with the
+-diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
+-index 48ca852381..a6252311db 100644
+---- a/src/include/access/xlog.h
+-+++ b/src/include/access/xlog.h
+-@@ -299,4 +299,9 @@ extern SessionBackupState get_backup_status(void);
+- /* files to signal promotion to primary */
+- #define PROMOTE_SIGNAL_FILE		"promote"
+- 
+-+/* Slot Recovery */
+-+typedef bool (*CheckDeleteXlogFileCB) (XLogSegNo segNo);
+-+extern PGDLLIMPORT CheckDeleteXlogFileCB check_delete_xlog_file_cb;
+-+/* /Slot Recovery */
+-+
+- #endif							/* XLOG_H */
+-diff --git a/src/include/access/xlogreader.h b/src/include/access/xlogreader.h
+-index da32c7db77..e4aa84930c 100644
+---- a/src/include/access/xlogreader.h
+-+++ b/src/include/access/xlogreader.h
+-@@ -441,4 +441,9 @@ extern bool XLogRecGetBlockTagExtended(XLogReaderState *record, uint8 block_id,
+- 									   BlockNumber *blknum,
+- 									   Buffer *prefetch_buffer);
+- 
+-+/* Slot Recovery */
+-+typedef void (*WalFileOpenCB) (XLogReaderState *state);
+-+extern PGDLLIMPORT WalFileOpenCB openCb;
+-+/* /Slot Recovery */
+-+
+- #endif							/* XLOGREADER_H */
+-diff --git a/src/include/access/xlogutils.h b/src/include/access/xlogutils.h
+-index 5b77b11f50..8e6bb36428 100644
+---- a/src/include/access/xlogutils.h
+-+++ b/src/include/access/xlogutils.h
+-@@ -115,4 +115,9 @@ extern void XLogReadDetermineTimeline(XLogReaderState *state,
+- 
+- extern void WALReadRaiseError(WALReadError *errinfo);
+- 
+-+/* Slot Recovery */
+-+typedef void (*WalFileCloseCB) (XLogReaderState *state);
+-+extern PGDLLIMPORT WalFileCloseCB closeCb;
+-+/* /Slot Recovery */
+-+
+- #endif
+-diff --git a/src/include/replication/slot.h b/src/include/replication/slot.h
+-index a8a89dc784..7e6f5026ae 100644
+---- a/src/include/replication/slot.h
+-+++ b/src/include/replication/slot.h
+-@@ -246,4 +246,13 @@ extern void CheckPointReplicationSlots(void);
+- extern void CheckSlotRequirements(void);
+- extern void CheckSlotPermissions(void);
+- 
+-+/* Slot Recovery */
+-+typedef void (*SlotRecoveryCB) (XLogReaderState *state, ReplicationSlot *slot,
+-+        TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
+-+extern PGDLLIMPORT SlotRecoveryCB recoveryCb;
+-+
+-+typedef void (*StatCB) (XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
+-+extern PGDLLIMPORT StatCB statCb;
+-+/* /Slot Recovery */
+-+
+- #endif							/* SLOT_H */
 diff --git a/src/backend/access/transam/xlog.c b/src/backend/access/transam/xlog.c
-index 06235073ce..6ae93d6abd 100644
+index 6ae93d6abd..06235073ce 100644
 --- a/src/backend/access/transam/xlog.c
 +++ b/src/backend/access/transam/xlog.c
-@@ -3680,6 +3680,11 @@ RemoveNonParentXlogFiles(XLogRecPtr switchpoint, TimeLineID newTLI)
+@@ -3680,11 +3680,6 @@ RemoveNonParentXlogFiles(XLogRecPtr switchpoint, TimeLineID newTLI)
   * insertTLI is the current timeline for XLOG insertion. Any recycled segments
   * should be used for this timeline.
   */
-+
-+/* Slot Recovery */
-+CheckDeleteXlogFileCB check_delete_xlog_file_cb = NULL;
-+/* /Slot Recovery */
-+
+-
+-/* Slot Recovery */
+-CheckDeleteXlogFileCB check_delete_xlog_file_cb = NULL;
+-/* /Slot Recovery */
+-
  static void
  RemoveXlogFile(const struct dirent *segment_de,
  			   XLogSegNo recycleSegNo, XLogSegNo *endlogSegNo,
-@@ -3693,6 +3698,14 @@ RemoveXlogFile(const struct dirent *segment_de,
+@@ -3698,14 +3693,6 @@ RemoveXlogFile(const struct dirent *segment_de,
  
  	snprintf(path, MAXPGPATH, XLOGDIR "/%s", segname);
  
-+	/* Slot Recovery */
-+	 if (check_delete_xlog_file_cb) {
-+        if (!check_delete_xlog_file_cb(recycleSegNo))
-+            return;
-+    }
-+	/* /Slot Recovery */
-+
-+
+-	/* Slot Recovery */
+-	 if (check_delete_xlog_file_cb) {
+-        if (!check_delete_xlog_file_cb(recycleSegNo))
+-            return;
+-    }
+-	/* /Slot Recovery */
+-
+-
  	/*
  	 * Before deleting the file, see if it can be recycled as a future log
  	 * segment. Only recycle normal files, because we don't want to recycle
 diff --git a/src/backend/access/transam/xlogreader.c b/src/backend/access/transam/xlogreader.c
-index 85745fa3bf..58ebf10245 100644
+index 58ebf10245..85745fa3bf 100644
 --- a/src/backend/access/transam/xlogreader.c
 +++ b/src/backend/access/transam/xlogreader.c
-@@ -41,6 +41,10 @@
+@@ -41,10 +41,6 @@
  #include "common/logging.h"
  #endif
  
-+/* Slot Recovery */
-+WalFileOpenCB openCb = NULL;
-+/* /Slot Recovery */
-+
+-/* Slot Recovery */
+-WalFileOpenCB openCb = NULL;
+-/* /Slot Recovery */
+-
  static void report_invalid_record(XLogReaderState *state, const char *fmt,...)
  			pg_attribute_printf(2, 3);
  static void allocate_recordbuf(XLogReaderState *state, uint32 reclength);
-@@ -1548,6 +1552,13 @@ WALRead(XLogReaderState *state,
+@@ -1552,13 +1548,6 @@ WALRead(XLogReaderState *state,
  			/* Update the current segment info. */
  			state->seg.ws_tli = tli;
  			state->seg.ws_segno = nextSegNo;
-+			
-+			/* Slot Recovery */
-+			if (openCb) 
-+			{
-+                openCb(state);
-+            }
-+			/* /Slot Recovery */
+-			
+-			/* Slot Recovery */
+-			if (openCb) 
+-			{
+-                openCb(state);
+-            }
+-			/* /Slot Recovery */
  		}
  
  		/* How many bytes are within this segment? */
 diff --git a/src/backend/access/transam/xlogutils.c b/src/backend/access/transam/xlogutils.c
-index 43f7b31205..3e455eaeaa 100644
+index 3e455eaeaa..43f7b31205 100644
 --- a/src/backend/access/transam/xlogutils.c
 +++ b/src/backend/access/transam/xlogutils.c
-@@ -32,6 +32,9 @@
+@@ -32,9 +32,6 @@
  #include "utils/hsearch.h"
  #include "utils/rel.h"
  
-+/* Slot Recovery */
-+WalFileCloseCB closeCb = NULL;
-+/* /Slot Recovery */
+-/* Slot Recovery */
+-WalFileCloseCB closeCb = NULL;
+-/* /Slot Recovery */
  
  /* GUC variable */
  bool		ignore_invalid_pages = false;
-@@ -843,6 +846,13 @@ wal_segment_open(XLogReaderState *state, XLogSegNo nextSegNo,
+@@ -846,13 +843,6 @@ wal_segment_open(XLogReaderState *state, XLogSegNo nextSegNo,
  void
  wal_segment_close(XLogReaderState *state)
  {
-+	/* Slot Recovery */
-+	if (closeCb)
-+	{
-+        closeCb(state);
-+    }
-+	/* /Slot Recovery */
-+	
+-	/* Slot Recovery */
+-	if (closeCb)
+-	{
+-        closeCb(state);
+-    }
+-	/* /Slot Recovery */
+-	
  	close(state->seg.ws_file);
  	/* need to check errno? */
  	state->seg.ws_file = -1;
 diff --git a/src/backend/replication/slot.c b/src/backend/replication/slot.c
-index e70f066eb8..8eae954dd1 100644
+index 8eae954dd1..e70f066eb8 100644
 --- a/src/backend/replication/slot.c
 +++ b/src/backend/replication/slot.c
-@@ -1312,6 +1312,7 @@ ReportSlotInvalidation(ReplicationSlotInvalidationCause cause,
+@@ -1312,7 +1312,6 @@ ReportSlotInvalidation(ReplicationSlotInvalidationCause cause,
   * This is inherently racy, because we release the LWLock
   * for syscalls, so caller must restart if we return true.
   */
-+
+-
  static bool
  InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
  							   ReplicationSlot *s,
-@@ -1438,8 +1439,12 @@ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
+@@ -1439,12 +1438,8 @@ InvalidatePossiblyObsoleteSlot(ReplicationSlotInvalidationCause cause,
  			 * XXX: We should consider not overwriting restart_lsn and instead
  			 * just rely on .invalidated.
  			 */
--			if (conflict == RS_INVAL_WAL_REMOVED)
--				s->data.restart_lsn = InvalidXLogRecPtr;
-+			if (conflict == RS_INVAL_WAL_REMOVED) {
-+				/* Slot Recovery */
-+				if (!recoveryCb) 
-+					s->data.restart_lsn = InvalidXLogRecPtr;
-+				/* /Slot Recovery */
-+			}
+-			if (conflict == RS_INVAL_WAL_REMOVED) {
+-				/* Slot Recovery */
+-				if (!recoveryCb) 
+-					s->data.restart_lsn = InvalidXLogRecPtr;
+-				/* /Slot Recovery */
+-			}
++			if (conflict == RS_INVAL_WAL_REMOVED)
++				s->data.restart_lsn = InvalidXLogRecPtr;
  
  			/* Let caller know */
  			*invalidated = true;
-@@ -1774,9 +1779,12 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
+@@ -1779,12 +1774,9 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
  	slot->just_dirtied = false;
  	SpinLockRelease(&slot->mutex);
  
--	/* and don't do anything if there's nothing to write */
--	if (!was_dirty)
--		return;
-+	/* Slot Recovery */
-+	if (!recoveryCb) {
-+        if (!was_dirty)
-+            return;
-+    }
-+	/* /Slot Recovery */
+-	/* Slot Recovery */
+-	if (!recoveryCb) {
+-        if (!was_dirty)
+-            return;
+-    }
+-	/* /Slot Recovery */
++	/* and don't do anything if there's nothing to write */
++	if (!was_dirty)
++		return;
  
  	LWLockAcquire(&slot->io_in_progress_lock, LW_EXCLUSIVE);
  
 diff --git a/src/backend/replication/walsender.c b/src/backend/replication/walsender.c
-index 4c53de08b9..744df6def4 100644
+index 744df6def4..4c53de08b9 100644
 --- a/src/backend/replication/walsender.c
 +++ b/src/backend/replication/walsender.c
-@@ -2142,6 +2142,13 @@ ProcessStandbyReplyMessage(void)
+@@ -2142,13 +2142,6 @@ ProcessStandbyReplyMessage(void)
  		walsnd->write = writePtr;
  		walsnd->flush = flushPtr;
  		walsnd->apply = applyPtr;
-+
-+		/* Slot Recovery */
-+		if (statCb) {
-+            statCb(writePtr, flushPtr, applyPtr);
-+        }
-+		/* /Slot Recovery */
-+
+-
+-		/* Slot Recovery */
+-		if (statCb) {
+-            statCb(writePtr, flushPtr, applyPtr);
+-        }
+-		/* /Slot Recovery */
+-
  		if (writeLag != -1 || clearLagTimes)
  			walsnd->writeLag = writeLag;
  		if (flushLag != -1 || clearLagTimes)
-@@ -2706,8 +2713,20 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
+@@ -2713,20 +2706,8 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
  
  	XLogFilePath(path, *tli_p, nextSegNo, state->segcxt.ws_segsize);
  	state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
--	if (state->seg.ws_file >= 0)
-+	if (state->seg.ws_file >= 0) 
-+	{
+-	if (state->seg.ws_file >= 0) 
+-	{
++	if (state->seg.ws_file >= 0)
  		return;
-+	}  else
-+	{
-+		if (recoveryCb)
-+        {
-+            recoveryCb(xlogreader, MyReplicationSlot, *tli_p, nextSegNo,
-+                       state->segcxt.ws_segsize);
-+            state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
-+            if (state->seg.ws_file >= 0)
-+                return;
-+        }
-+	}
+-	}  else
+-	{
+-		if (recoveryCb)
+-        {
+-            recoveryCb(xlogreader, MyReplicationSlot, *tli_p, nextSegNo,
+-                       state->segcxt.ws_segsize);
+-            state->seg.ws_file = BasicOpenFile(path, O_RDONLY | PG_BINARY);
+-            if (state->seg.ws_file >= 0)
+-                return;
+-        }
+-	}
  
  	/*
  	 * If the file is not found, assume it's because the standby asked for a
-@@ -2742,6 +2761,12 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
+@@ -2761,12 +2742,6 @@ WalSndSegmentOpen(XLogReaderState *state, XLogSegNo nextSegNo,
   * If there is no unsent WAL remaining, WalSndCaughtUp is set to true,
   * otherwise WalSndCaughtUp is set to false.
   */
-+
-+/* Slot Recovery */
-+SlotRecoveryCB recoveryCb = NULL;
-+StatCB statCb = NULL;
-+/* /Slot Recovery */
-+
+-
+-/* Slot Recovery */
+-SlotRecoveryCB recoveryCb = NULL;
+-StatCB statCb = NULL;
+-/* /Slot Recovery */
+-
  static void
  XLogSendPhysical(void)
  {
-@@ -2978,7 +3003,12 @@ retry:
+@@ -3003,12 +2978,7 @@ retry:
  
  	/* See logical_read_xlog_page(). */
  	XLByteToSeg(startptr, segno, xlogreader->segcxt.ws_segsize);
--	CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
-+
-+	/* Slot Recovery */
-+	if (!recoveryCb) {
-+        CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
-+    }
-+	/* /Slot Recovery */
+-
+-	/* Slot Recovery */
+-	if (!recoveryCb) {
+-        CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
+-    }
+-	/* /Slot Recovery */
++	CheckXLogRemoved(segno, xlogreader->seg.ws_tli);
  
  	/*
  	 * During recovery, the currently-open WAL file might be replaced with the
 diff --git a/src/include/access/xlog.h b/src/include/access/xlog.h
-index 48ca852381..a6252311db 100644
+index a6252311db..48ca852381 100644
 --- a/src/include/access/xlog.h
 +++ b/src/include/access/xlog.h
-@@ -299,4 +299,9 @@ extern SessionBackupState get_backup_status(void);
+@@ -299,9 +299,4 @@ extern SessionBackupState get_backup_status(void);
  /* files to signal promotion to primary */
  #define PROMOTE_SIGNAL_FILE		"promote"
  
-+/* Slot Recovery */
-+typedef bool (*CheckDeleteXlogFileCB) (XLogSegNo segNo);
-+extern PGDLLIMPORT CheckDeleteXlogFileCB check_delete_xlog_file_cb;
-+/* /Slot Recovery */
-+
+-/* Slot Recovery */
+-typedef bool (*CheckDeleteXlogFileCB) (XLogSegNo segNo);
+-extern PGDLLIMPORT CheckDeleteXlogFileCB check_delete_xlog_file_cb;
+-/* /Slot Recovery */
+-
  #endif							/* XLOG_H */
 diff --git a/src/include/access/xlogreader.h b/src/include/access/xlogreader.h
-index da32c7db77..e4aa84930c 100644
+index e4aa84930c..da32c7db77 100644
 --- a/src/include/access/xlogreader.h
 +++ b/src/include/access/xlogreader.h
-@@ -441,4 +441,9 @@ extern bool XLogRecGetBlockTagExtended(XLogReaderState *record, uint8 block_id,
+@@ -441,9 +441,4 @@ extern bool XLogRecGetBlockTagExtended(XLogReaderState *record, uint8 block_id,
  									   BlockNumber *blknum,
  									   Buffer *prefetch_buffer);
  
-+/* Slot Recovery */
-+typedef void (*WalFileOpenCB) (XLogReaderState *state);
-+extern PGDLLIMPORT WalFileOpenCB openCb;
-+/* /Slot Recovery */
-+
+-/* Slot Recovery */
+-typedef void (*WalFileOpenCB) (XLogReaderState *state);
+-extern PGDLLIMPORT WalFileOpenCB openCb;
+-/* /Slot Recovery */
+-
  #endif							/* XLOGREADER_H */
 diff --git a/src/include/access/xlogutils.h b/src/include/access/xlogutils.h
-index 5b77b11f50..8e6bb36428 100644
+index 8e6bb36428..5b77b11f50 100644
 --- a/src/include/access/xlogutils.h
 +++ b/src/include/access/xlogutils.h
-@@ -115,4 +115,9 @@ extern void XLogReadDetermineTimeline(XLogReaderState *state,
+@@ -115,9 +115,4 @@ extern void XLogReadDetermineTimeline(XLogReaderState *state,
  
  extern void WALReadRaiseError(WALReadError *errinfo);
  
-+/* Slot Recovery */
-+typedef void (*WalFileCloseCB) (XLogReaderState *state);
-+extern PGDLLIMPORT WalFileCloseCB closeCb;
-+/* /Slot Recovery */
-+
+-/* Slot Recovery */
+-typedef void (*WalFileCloseCB) (XLogReaderState *state);
+-extern PGDLLIMPORT WalFileCloseCB closeCb;
+-/* /Slot Recovery */
+-
  #endif
 diff --git a/src/include/replication/slot.h b/src/include/replication/slot.h
-index a8a89dc784..7e6f5026ae 100644
+index 7e6f5026ae..a8a89dc784 100644
 --- a/src/include/replication/slot.h
 +++ b/src/include/replication/slot.h
-@@ -246,4 +246,13 @@ extern void CheckPointReplicationSlots(void);
+@@ -246,13 +246,4 @@ extern void CheckPointReplicationSlots(void);
  extern void CheckSlotRequirements(void);
  extern void CheckSlotPermissions(void);
  
-+/* Slot Recovery */
-+typedef void (*SlotRecoveryCB) (XLogReaderState *state, ReplicationSlot *slot,
-+        TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
-+extern PGDLLIMPORT SlotRecoveryCB recoveryCb;
-+
-+typedef void (*StatCB) (XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
-+extern PGDLLIMPORT StatCB statCb;
-+/* /Slot Recovery */
-+
+-/* Slot Recovery */
+-typedef void (*SlotRecoveryCB) (XLogReaderState *state, ReplicationSlot *slot,
+-        TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
+-extern PGDLLIMPORT SlotRecoveryCB recoveryCb;
+-
+-typedef void (*StatCB) (XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
+-extern PGDLLIMPORT StatCB statCb;
+-/* /Slot Recovery */
+-
  #endif							/* SLOT_H */
