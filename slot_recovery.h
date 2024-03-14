@@ -40,11 +40,9 @@ extern SRSharedData* data;
 /* Hooks */
 void file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot, TimeLineID tli,
                        XLogSegNo logSegNo, int wal_segsz_bytes);
-void walFileOpened(XLogReaderState *state);
 void walFileClosed(XLogReaderState *state);
 bool check_delete_xlog_file(XLogSegNo segNo);
 void get_stat(XLogRecPtr writePtr, XLogRecPtr flushPtr, XLogRecPtr applyPtr);
-void set_restart_lsn(XLogRecPtr restart_lsn);
 
 
 #endif
