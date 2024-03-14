@@ -10,14 +10,17 @@ CREATE FUNCTION wal_files() returns text[]
 AS 'MODULE_PATHNAME', 'wal_files'
     LANGUAGE C PARALLEL SAFE;
 
-CREATE FUNCTION is_file_restored(file_name text) returns bool
-AS 'MODULE_PATHNAME', 'is_file_restored'
-    LANGUAGE C PARALLEL SAFE;
-
-CREATE FUNCTION restart_lsn() returns pg_lsn
-AS 'MODULE_PATHNAME', 'get_restart_lsn'
-    LANGUAGE C PARALLEL SAFE;
-
 CREATE FUNCTION last_restored_file() returns text
 AS 'MODULE_PATHNAME', 'get_last_restored_file'
     LANGUAGE C PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION restart_lsn() RETURNS pg_lsn AS
+$$
+DECLARE
+    lsn_value pg_lsn;
+BEGIN
+    SELECT restart_lsn INTO lsn_value FROM pg_replication_slots LIMIT 1;
+    RETURN lsn_value;
+END;
+$$
+    LANGUAGE plpgsql;
