@@ -126,8 +126,11 @@ void walFileClosed(XLogReaderState *state) {
     if (!in_slot_recovery)
         return;
 
-    XLogFilePath(path, state->seg.ws_tli, state->seg.ws_segno, wal_segment_size);
-    unlink(path);
+    if (state->seg.ws_segno <= last_removed_segno)
+    {
+        XLogFilePath(path, state->seg.ws_tli, state->seg.ws_segno, wal_segment_size);
+        unlink(path);
+    }
 
     if (state->seg.ws_segno == last_removed_segno) {
         stop_recovery();
