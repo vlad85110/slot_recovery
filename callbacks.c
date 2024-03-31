@@ -5,6 +5,7 @@
 #include "postgres.h"
 
 #include <unistd.h>
+#include <time.h>
 
 #include "access/relation.h"
 #include "storage/bufmgr.h"
@@ -21,12 +22,16 @@ private XLogSegNo last_removed_segno;
 
 
 private int files_restored;
+private struct timespec start, end;
 
 private void stop_recovery(void);
+
 private void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
                             TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
+
 private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
                                  TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
+
 private void restore_all_files(XLogReaderState *state, ReplicationSlot *slot,
                                TimeLineID tli, XLogSegNo logSegNo, int wal_segsz_bytes);
 
@@ -47,11 +52,15 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
     XLogFileName(end_file, tli, last_removed_segno, wal_segsz_bytes);
 
+    clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+
     elog(LOG, "starting recovery: oldest requested file - %s; last removed requested file - %s",
          start_file, end_file);
 }
 
 private void stop_recovery() {
+    double time_taken;
+
     in_slot_recovery = false;
 
     LWLockAcquire(ReplicationSlotControlLock, LW_SHARED);
@@ -62,7 +71,12 @@ private void stop_recovery() {
     data->can_start_recovery = config.auto_recovery;
     SpinLockRelease(&data->mutex);
 
-    elog(LOG, "recovery complete: restore %d files", files_restored);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+
+    time_taken = (double) (end.tv_sec - start.tv_sec)
+                 + 0.000000001 * (double) (end.tv_nsec - start.tv_nsec);
+
+    elog(LOG, "recovery complete: restore %d files, time taken - %.3lf s", files_restored, time_taken);
 }
 
 private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
@@ -72,15 +86,12 @@ private void restore_single_file(XLogReaderState *state, ReplicationSlot *slot,
 
     XLogFileName(name, tli, logSegNo, wal_segsz_bytes);
     if (!RestoreArchivedFile(path, name, name,
-                             wal_segment_size, false))
-    {
+                             wal_segment_size, false)) {
         elog(ERROR, "cant restore wal");
     } else {
         ++files_restored;
         data->last_restored_segno = logSegNo;
     }
-
-    sleep(1);
 }
 
 void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID tli, XLogSegNo logSegNo,
@@ -121,7 +132,7 @@ file_not_found_cb(XLogReaderState *state, ReplicationSlot *slot,
 }
 
 void walFileClosed(XLogReaderState *state) {
-    char		path[MAXPGPATH];
+    char path[MAXPGPATH];
 
     if (!in_slot_recovery)
         return;
