@@ -16,11 +16,6 @@
 #include "slot_recovery.h"
 
 private bool in_slot_recovery;
-
-//todo перененсти в разделяемую память
-private XLogSegNo last_removed_segno;
-
-
 private int files_restored;
 private struct timespec start, end;
 
@@ -47,10 +42,10 @@ void start_recovery(XLogReaderState *state, ReplicationSlot *slot,
     data->last_restored_segno = 0;
     SpinLockRelease(&data->mutex);
 
-    last_removed_segno = XLogGetLastRemovedSegno();
+    data->last_removed_segno = XLogGetLastRemovedSegno();
 
     XLogFileName(start_file, tli, logSegNo, wal_segsz_bytes);
-    XLogFileName(end_file, tli, last_removed_segno, wal_segsz_bytes);
+    XLogFileName(end_file, tli, data->last_removed_segno, wal_segsz_bytes);
 
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
@@ -100,7 +95,7 @@ void restore_all_files(XLogReaderState *state, ReplicationSlot *slot, TimeLineID
 
     elog(LOG, "restoring all files");
 
-    for (seg_no = logSegNo; seg_no <= last_removed_segno; ++seg_no) {
+    for (seg_no = logSegNo; seg_no <= data->last_removed_segno; ++seg_no) {
         restore_single_file(state, slot, tli, seg_no, wal_segsz_bytes);
     }
 }
@@ -137,13 +132,13 @@ void walFileClosed(XLogReaderState *state) {
     if (!in_slot_recovery)
         return;
 
-    if (state->seg.ws_segno <= last_removed_segno)
+    if (state->seg.ws_segno <= data->last_removed_segno)
     {
         XLogFilePath(path, state->seg.ws_tli, state->seg.ws_segno, wal_segment_size);
         unlink(path);
     }
 
-    if (state->seg.ws_segno == last_removed_segno) {
+    if (state->seg.ws_segno == data->last_removed_segno) {
         stop_recovery();
     }
 }
@@ -152,6 +147,6 @@ bool check_delete_xlog_file(XLogSegNo segNo) {
     if (!in_slot_recovery)
         return true;
 
-    return segNo > last_removed_segno;
+    return segNo > data->last_removed_segno;
 }
 
